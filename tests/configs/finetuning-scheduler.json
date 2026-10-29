@@ -1,0 +1,11 @@
+{
+  "description": "finetuning-scheduler's release evidence, as its tests/gpu_ci/phase_manifest.py writes it",
+  "repository": "speediedan/finetuning-scheduler",
+  "artifact_prefix": "fts-release",
+  "phases_dir": "fts-phases",
+  "phases": ["gpu-nonstandalone", "standalone", "examples", "examples-multigpu"],
+  "measured_phases": ["gpu-nonstandalone", "standalone", "examples-multigpu"],
+  "failure_counts": ["rank_failures", "missing_rank_completions"],
+  "required_versions": ["finetuning_scheduler", "lightning", "torch"],
+  "shared_builds": ["torch_git_version", "lightning_commit"]
+}
