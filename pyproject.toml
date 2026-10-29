@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpu-epsilon"
+dynamic = ["version"]
+description = "Shared GPU CI tooling for finetuning-scheduler and interpretune"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniel Dale" }]
+# the release job runs on a CI agent's own Python, which may be as old as this
+requires-python = ">=3.10"
+# standard library only, by design: see README.md
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+dev = ["pytest>=8", "ruff", "pyright"]
+
+[project.scripts]
+gpu-epsilon-release-eligibility = "gpu_epsilon.release_eligibility:main"
+
+[project.urls]
+Repository = "https://github.com/speediedan/gpu-epsilon"
+
+[tool.setuptools.dynamic]
+version = { attr = "gpu_epsilon.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gpu_epsilon"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
