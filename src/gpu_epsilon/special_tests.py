@@ -25,8 +25,8 @@ all is ``UNKNOWN`` and fails the run, so a crash can never read as a skip.
 What differs between projects is configuration, read from ``[tool.gpu-epsilon.special-tests]`` in the project's
 ``pyproject.toml`` (:class:`RunnerConfig` lists the keys): the mark table and the variables it sets, the collection
 roots, the command that runs one node (coverage included), and any project-specific options. Host infrastructure stays
-behind seams: the GPU lease is the calling shell's (the runner is meant to be ``exec``-ed by a short entry script that
-takes it, after ``--check-args`` has validated the arguments, so a bad flag never waits for a lease);
+behind seams: ``--lease`` takes the host's GPU lease for the whole run (:mod:`gpu_epsilon.lease`, a no-op unless
+``GPU_LEASE_CMD`` is set) after the arguments are validated, so a bad flag never waits for a lease;
 ``GPU_EPSILON_EVENT_CMD`` names a command run at each collection and test boundary, whose output goes to the log (a
 resource snapshot, say); ``publish = "azure"`` uploads the raw log with an Azure Pipelines logging command.
 
@@ -35,6 +35,7 @@ Usage, from the project root::
     python -m gpu_epsilon.special_tests --mark_type=standalone --filter_pattern='test_f'
     python -m gpu_epsilon.special_tests --mark_type=standalone --select_file=tests/.standalone_smoke
     python -m gpu_epsilon.special_tests --check-args --mark_type=exp_patch --experiment_patch_mask="1 0 0 1"
+    python -m gpu_epsilon.special_tests --lease --mark_type=standalone   # under the host's GPU lease, when it has one
 """
 import argparse
 import datetime
@@ -49,6 +50,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gpu_epsilon.lease import reexec_under_lease
 from gpu_epsilon.records import RECORD_DIR_ENV, read_sessions
 
 EVENT_CMD_ENV = "GPU_EPSILON_EVENT_CMD"
@@ -500,6 +502,11 @@ def _parser(config: RunnerConfig | None) -> argparse.ArgumentParser:
         action="store_true",
         help="validate the arguments and configuration, then exit 0 (for an entry script, before it takes a lease)",
     )
+    parser.add_argument(
+        "--lease",
+        action="store_true",
+        help="run under the host's GPU lease (GPU_LEASE_CMD), taken once after the arguments are validated",
+    )
     for option in config.options.values() if config else ():
         flag, dest = f"--{option.name}", _dest(option)
         if option.takes_value:
@@ -536,6 +543,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.check_args:
         return 0
+    if args.lease:
+        rest = sys.argv[1:] if argv is None else argv
+        reexec_under_lease([sys.executable, "-m", "gpu_epsilon.special_tests", *rest])
     run.log_dir.mkdir(parents=True, exist_ok=True)
     run.session_log.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()

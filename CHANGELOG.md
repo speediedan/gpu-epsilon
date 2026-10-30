@@ -7,6 +7,15 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The phase driver (`gpu_epsilon.phases`): a coverage run's phases as data in `[tool.gpu-epsilon.phases]`, each a
+  command or a special-test run, with optional phases selected by name, a `skip-unless` probe, `setup` and `report`
+  commands, one JSON record of the run, `--dry-run`, and one final status that `--allow-failures` cannot turn green
+  ([#3](https://github.com/speediedan/gpu-epsilon/issues/3)).
+
+- `--lease` on the special-test runner and the phase driver (`gpu_epsilon.lease`): the GPU lease re-exec seam each
+  project carried in shell, so a project needs no entry script in front of the runner
+  ([#4](https://github.com/speediedan/gpu-epsilon/issues/4)).
+
 - The special-test runner (`gpu_epsilon.special_tests`) and the per-rank record plugin it reads outcomes from
   (`gpu_epsilon.records`): one process per selected node id, outcomes from records rather than the log, one exit
   status, and the positive controls the shell runners lacked (an empty selection, a collection error, a crashing test,
