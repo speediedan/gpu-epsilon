@@ -28,6 +28,10 @@ keys), and the driver computes the status:
 - ``setup`` commands run before the first phase (``coverage erase``, say) and ``report`` commands after the last (the
   coverage report); a failing one fails the run.
 
+Building or activating the environment is out of scope and stays in each project's shell entry script: it runs before
+a usable Python environment exists, so the script builds or activates the venv, then calls this driver with the venv's
+interpreter.
+
 One JSON record of the run (each phase's status, exit code, duration, and the special-test runner's counts) is written
 beside the session log. ``--dry-run`` prints the resolved plan and runs nothing. ``--lease`` takes the host's GPU lease
 for the whole run (:mod:`gpu_epsilon.lease`). ``GPU_EPSILON_EVENT_CMD`` runs at each phase boundary, as it does at
