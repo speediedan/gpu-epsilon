@@ -130,6 +130,9 @@ gets `--allow-failures` too), and the driver still exits 1, naming each failed p
 after a failure. A JSON record of the run (each phase's status, exit code, duration, and the special-test runner's
 counts) is written beside the session log. `--lease` takes the host's GPU lease once for the whole run.
 
+Building or activating the environment is out of scope: it runs before a usable Python environment exists, so it stays
+in each project's shell entry script, which then calls the driver with the venv's interpreter.
+
 ```toml
 [tool.gpu-epsilon.phases]
 name = "FTS"
