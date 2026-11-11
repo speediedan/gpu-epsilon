@@ -1,0 +1,3 @@
+# The oracles are verbatim copies pinned by sha256 and split on an LF-terminated marker, so no checkout may rewrite
+# their line endings (Windows would otherwise convert them to CRLF).
+tests/oracles/*.py -text
