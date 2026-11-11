@@ -16,8 +16,9 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
-dev = ["pytest>=8", "ruff", "pyright"]
+# coverage and pytest-rerunfailures run the phase-evidence tests' coverage and rerun cases rather than skipping them
+test = ["pytest>=8", "coverage", "pytest-rerunfailures"]
+dev = ["pytest>=8", "coverage", "pytest-rerunfailures", "ruff", "pyright"]
 
 [project.scripts]
 gpu-epsilon-release-eligibility = "gpu_epsilon.release_eligibility:main"
@@ -38,6 +39,8 @@ addopts = "--strict-markers"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+# verbatim copies of the code phase_evidence replaced, checked byte for byte against their sources
+extend-exclude = ["tests/oracles/*_phase_*.py"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I"]

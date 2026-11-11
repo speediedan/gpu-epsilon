@@ -1,0 +1,55 @@
+# finetuning-scheduler's phase evidence, as its tests/gpu_ci/phase_manifest.py defines it (PHASES, SELECTION_VARS,
+# RUN_ENV, DEVICE_VARS, SMOKE_FILE, installed_versions, and a report that passes only a clean phase). The tests check it
+# against the oracle copy of that module in tests/oracles.
+[tool.gpu-epsilon.phase-evidence]
+repository = "speediedan/finetuning-scheduler"
+selection-vars = ["PL_RUN_STANDALONE_TESTS", "FTS_EXPERIMENTAL_PATCH_TESTS", "FTS_CUDA_TESTS_ONLY", "FTS_REVERSE_ORDER"]
+collect-env = { PL_RUN_CUDA_TESTS = "1" }
+device-vars = ["CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES"]
+run-env-exports-selection = true
+gate = { empty = "never", unreviewed-exclusions = "never" }
+
+[tool.gpu-epsilon.phase-evidence.versions]
+lightning = "module:lightning"
+finetuning_scheduler = "module:finetuning_scheduler"
+lightning_commit = "vcs:lightning"
+torch_record_sha256 = "record:torch"
+
+[tool.gpu-epsilon.phase-evidence.scopes.smoke]
+select-file = "tests/.standalone_smoke"
+phases = ["standalone"]
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "gpu-nonstandalone"
+paths = ["src/finetuning_scheduler", "tests"]
+selection-env = { FTS_CUDA_TESTS_ONLY = "1" }
+command = "python -m coverage run --source src/finetuning_scheduler -m pytest src/finetuning_scheduler tests -v"
+measured = true
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "standalone"
+paths = ["tests"]
+selection-env = { PL_RUN_STANDALONE_TESTS = "1" }
+command = "python -m gpu_epsilon.special_tests --mark_type=standalone"
+measured = true
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "examples"
+paths = ["src/fts_examples"]
+command = "python -m pytest src/fts_examples -v"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "examples-multigpu"
+paths = ["src/fts_examples"]
+selection-env = { PL_RUN_STANDALONE_TESTS = "1" }
+args = ["-k", "model_parallel_examples"]
+command = "python -m gpu_epsilon.special_tests --mark_type=standalone --collect_dir=src/fts_examples --filter_pattern=model_parallel_examples"
+measured = true
+
+# the scheduled reverse-order leg: in cross-host parity, never in release eligibility
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "pool-reverse"
+paths-from = { glob = "tests/test_*.py", contains = "dist_pool_fixture" }
+selection-env = { FTS_REVERSE_ORDER = "1" }
+command = "python -m pytest <pool modules> -v"
+release = false

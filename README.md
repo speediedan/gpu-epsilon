@@ -1,9 +1,9 @@
 # gpu-epsilon
 
 Shared GPU CI tooling for [finetuning-scheduler](https://github.com/speediedan/finetuning-scheduler) and
-[interpretune](https://github.com/speediedan/interpretune): the rules their GPU phase evidence is read by, the
-release eligibility check both projects' release pipelines run, the special-test runner that runs their
-one-process-per-test selections, and the phase driver that runs a coverage run's phases in order.
+[interpretune](https://github.com/speediedan/interpretune): the rules their GPU phase evidence is read by, the tool
+that writes that evidence, the release eligibility check both projects' release pipelines run, the special-test runner
+that runs their one-process-per-test selections, and the phase driver that runs a coverage run's phases in order.
 
 Both projects run their GPU CI on the same self-hosted agents, one per GPU vendor, and report each run phase by phase
 in the same evidence format. Each used to carry its own copy of the code that reads that evidence. This repository
@@ -13,8 +13,9 @@ holds the one copy.
 
 - **Standard library only, Python 3.10 and newer.** The release check runs on a CI agent's own Python, without
   installing either project or any test dependency. The tests hold this as a contract (`-I -S`, no site-packages).
-  The special-test runner and the phase driver run in the project's own environment and read their configuration from
-  `pyproject.toml`, so they need Python 3.11 (`tomllib`); pytest is the project's, not a dependency of this package.
+  The special-test runner, the phase driver and the phase-evidence writer run in the project's own environment and read
+  their configuration from `pyproject.toml`, so they need Python 3.11 (`tomllib`); pytest is the project's, not a
+  dependency of this package.
 - **A CI dependency, never a runtime one.** A consuming project pins this repository by commit in its CI requirements
   (`gpu-epsilon @ git+https://github.com/speediedan/gpu-epsilon@<sha>`) and never in its package metadata, so nothing
   of it reaches the project's published `Requires-Dist`.
@@ -55,6 +56,72 @@ rule it checks. The `--<vendor>-result` options are the configuration's vendors.
 
 Any other key is refused. [`tests/configs/`](tests/configs) holds the two projects' configurations as the tests use
 them.
+
+## Phase evidence
+
+The release checker reads each phase's manifest and report; `gpu_epsilon.phase_evidence` writes them. A GPU job
+collects every phase's manifest on the CPU first, runs each phase under `run-env`'s exports, then reports each one:
+
+```bash
+python -m gpu_epsilon.phase_evidence collect --phase standalone --out-dir /evidence/phases
+eval "$(python -m gpu_epsilon.phase_evidence run-env --phase standalone --out-dir /evidence/phases)"
+python -m gpu_epsilon.special_tests --mark_type=standalone
+python -m gpu_epsilon.phase_evidence report --phase standalone --out-dir /evidence/phases \
+    --vendor amd --evidence-class pipeline --job-class ci-release --image "$IMAGE" --lease-mode tool
+```
+
+`collect` strips the project's selection variables and any inherited `PYTEST_ADDOPTS` before collecting, and exits 1
+when a collection failed. `run-env` makes every pytest process the phase starts load `gpu_epsilon.records` and write to
+the phase's own record directory (`GPU_EPSILON_PHASE_RECORD_DIR`, separate from the runner's per-node one), recording
+only sessions rooted at the repository. `report` counts each node by rank 0's verdict, failing it when any rank failed,
+errored or never finished, and exits by the project's gate. `coverage-diff` compares two runs' measured phases line by
+line. The module docstring states every rule.
+
+```toml
+[tool.gpu-epsilon.phase-evidence]
+repository = "speediedan/finetuning-scheduler"
+selection-vars = ["PL_RUN_STANDALONE_TESTS", "FTS_CUDA_TESTS_ONLY"]
+collect-env = { PL_RUN_CUDA_TESTS = "1" }
+run-env-exports-selection = true
+gate = { empty = "never", unreviewed-exclusions = "never" }
+versions = { lightning = "module:lightning", lightning_commit = "vcs:lightning" }
+scopes.smoke = { select-file = "tests/.standalone_smoke", phases = ["standalone"] }
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "standalone"
+paths = ["tests"]
+selection-env = { PL_RUN_STANDALONE_TESTS = "1" }
+command = "python -m gpu_epsilon.special_tests --mark_type=standalone"
+measured = true
+```
+
+| key | meaning |
+| --- | --- |
+| `repository` | the `owner/name` every manifest names |
+| `phase` | the phases, in order (below) |
+| `selection-vars` | variables the project's `conftest.py` selects on, removed before every collection |
+| `collect-env` | variables set for every collection and named in every selector (a GPU opt-in that gates skips) |
+| `device-vars` | the visible-device variables a report records (default: the CUDA, ROCR and HIP ones) |
+| `run-env-exports-selection` | whether `run-env` also exports `collect-env` and the phase's `selection-env` |
+| `scopes` | narrower scopes: `select-file` (chosen by `--scope`, filtered here, limited to `phases`) or `select-file-env` (chosen when the variable is set, narrowed by the project's `conftest.py`) |
+| `versions` | report key to `dist:<distribution>`, `module:<module>`, `vcs:<distribution>` or `record:<distribution>`, beside the built-in interpreter and torch versions; anything not installed is `null` |
+| `gate` | `empty` (`never` or `outside-full`), `unreviewed-exclusions` (`never` or `except-release`) and `release-job-classes` (default `["ci-release"]`); `clean` always passes and `failing` never does |
+| `vendors` | each vendor and the backend its reports name; defaults to `{nvidia = "cuda", amd = "hip"}` |
+| `description` | free text, ignored |
+
+| phase key | meaning |
+| --- | --- |
+| `name` | the phase's name, as the pipeline and the release configuration use it |
+| `paths` / `paths-from` | exactly one: the pytest paths, or `{glob, contains}`: the files matching `glob` whose text contains `contains` |
+| `selection-env` | the variables that select the phase's tests |
+| `args` | pytest arguments that narrow the selected collection (`-k`) |
+| `command` | the pipeline command, for `list` |
+| `release` | whether a release leg runs the phase (default true) |
+| `measured` | whether the pipeline runs it under `coverage run`, so `run-env` sets `COVERAGE_FILE` and `report` digests the export |
+
+Any other key, at any level, is refused by name (exit 2). [`tests/configs/`](tests/configs) holds both projects'
+configurations, checked against the implementations they replace, which are kept verbatim in
+[`tests/oracles/`](tests/oracles).
 
 ## Special-test runner
 

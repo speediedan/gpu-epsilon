@@ -1,0 +1,41 @@
+# interpretune's phase evidence, as its tests/gpu_ci/phase_report.py defines it (PHASES, SELECTION_VARS, DEVICE_VARS,
+# IT_GPU_SELECTION_FILE, installed_versions and gate). The tests check it against the oracle copy of that module in
+# tests/oracles.
+[tool.gpu-epsilon.phase-evidence]
+repository = "speediedan/interpretune"
+selection-vars = [
+    "IT_RUN_CUDA_TESTS", "IT_RUN_STANDALONE_TESTS", "IT_RUN_PROFILING_TESTS", "IT_RUN_OPTIONAL_TESTS",
+    "IT_RUN_BENCHMARK_TESTS", "IT_GPU_MEM_CLASS", "IT_GPU_SMALL_MAX_GB",
+]
+device-vars = ["CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "IT_GPU_DEVICE"]
+gate = { empty = "outside-full", unreviewed-exclusions = "except-release", release-job-classes = ["ci-release"] }
+
+[tool.gpu-epsilon.phase-evidence.versions]
+interpretune = "dist:interpretune"
+lightning = "dist:lightning"
+finetuning-scheduler = "dist:finetuning-scheduler"
+transformer-lens = "dist:transformer-lens"
+nnsight = "dist:nnsight"
+sae-lens = "dist:sae-lens"
+
+# a selected run's selection file narrows the phase in tests/conftest.py, and the collection with it
+[tool.gpu-epsilon.phase-evidence.scopes.selected]
+select-file-env = "IT_GPU_SELECTION_FILE"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "cuda"
+paths = ["tests", "src/it_examples/tests"]
+selection-env = { IT_RUN_CUDA_TESTS = "1" }
+command = "python -m pytest --cov=src/interpretune tests src/it_examples/tests -v --reruns 2"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "standalone"
+paths = ["tests", "src/it_examples/tests"]
+selection-env = { IT_RUN_STANDALONE_TESTS = "1" }
+command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=standalone --allow-failures --allow-empty"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "profile_ci"
+paths = ["tests", "src/it_examples/tests"]
+selection-env = { IT_RUN_PROFILING_TESTS = "1" }
+command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=profile_ci --allow-failures --allow-empty"
