@@ -11,9 +11,17 @@
 # limitations under the License.
 """A pytest plugin recording what a session collected and how each node ended, per rank.
 
-Load it with ``-p gpu_epsilon.records``. It does nothing unless ``GPU_EPSILON_RECORD_DIR`` names a directory; then each
-pytest session (each rank's, under a launcher such as Lightning's ``ddp`` that re-runs the test in one pytest session
-per rank) appends JSON lines to its own file there:
+Load it with ``-p gpu_epsilon.records``. It has two sinks, each doing nothing unless its variable names a directory:
+
+- ``GPU_EPSILON_RECORD_DIR``, the special-test runner's: it points each node's process at a directory of its own;
+- ``GPU_EPSILON_PHASE_RECORD_DIR``, :mod:`gpu_epsilon.phase_evidence`'s: one directory for a whole GPU CI phase, set
+  through ``run-env`` and so inherited by every pytest process the phase starts, the runner's included. It needs its
+  own variable because the runner replaces the first one for every node. When ``GPU_EPSILON_PHASE_RECORD_ROOT`` is
+  set, only a session rooted there is recorded: a test that runs pytest on a tree of its own inherits the phase's
+  variables, and its session is not the phase's.
+
+Each pytest session (each rank's, under a launcher such as Lightning's ``ddp`` that re-runs the test in one pytest
+session per rank) appends JSON lines to its own file in each active sink:
 
 - ``{"event": "start"}`` when the session starts;
 - ``{"event": "collect_error", "nodeid": ...}`` for each collector that failed (an import error, say);
@@ -33,6 +41,8 @@ import os
 from pathlib import Path
 
 RECORD_DIR_ENV = "GPU_EPSILON_RECORD_DIR"
+PHASE_RECORD_DIR_ENV = "GPU_EPSILON_PHASE_RECORD_DIR"
+PHASE_RECORD_ROOT_ENV = "GPU_EPSILON_PHASE_RECORD_ROOT"
 
 
 def identity() -> dict:
@@ -106,11 +116,17 @@ def read_sessions(record_dir: Path) -> list[list[dict]]:
     return sessions
 
 
-def pytest_configure(config):
-    record_dir = os.environ.get(RECORD_DIR_ENV)
-    if not record_dir:
-        return
+def _register(config, record_dir: str, name: str) -> None:
     Path(record_dir).mkdir(parents=True, exist_ok=True)
     ident = identity()
     path = Path(record_dir) / f"records-rank{ident['rank']}-pid{ident['pid']}.jsonl"
-    config.pluginmanager.register(Recorder(path), "gpu_epsilon_recorder")
+    config.pluginmanager.register(Recorder(path), name)
+
+
+def pytest_configure(config):
+    record_dir = os.environ.get(RECORD_DIR_ENV)
+    if record_dir:
+        _register(config, record_dir, "gpu_epsilon_recorder")
+    phase_dir, phase_root = os.environ.get(PHASE_RECORD_DIR_ENV), os.environ.get(PHASE_RECORD_ROOT_ENV)
+    if phase_dir and (not phase_root or Path(config.rootpath).resolve() == Path(phase_root).resolve()):
+        _register(config, phase_dir, "gpu_epsilon_phase_recorder")
