@@ -1,0 +1,201 @@
+# The any-vendor GPU job shared by finetuning-scheduler and interpretune: one job that runs on either GPU agent,
+# choosing its image and device options at RUNTIME from the agent's own GPU_VENDOR (declared in the agent's `.env`, so
+# it is also a capability). An Azure container resource is fixed before the agent is known, which is why this is a
+# host job that starts its own container rather than a container job.
+#
+# A consuming pipeline declares this repository as a resource, pinned to a tag, and uses the template from it:
+#
+#   resources:
+#     repositories:
+#       - repository: ci
+#         type: github
+#         name: speediedan/gpu-epsilon
+#         endpoint: <the project's GitHub service connection>
+#         ref: refs/tags/<tag>
+#   jobs:
+#     - template: templates/gpu-job.yml@ci
+#       parameters: ...
+#
+# Admission is by demands: the job class and the project are user capabilities an operator toggles on each agent, and
+# a vendor-demanded job adds `GPU_VENDOR -equals <vendor>`.
+#
+# The template owns the container's lifecycle: vendor selection, a digest-pinned image, the container's start with the
+# mounts both projects share, evidence publishing and the cleanup. The consumer passes everything that differs:
+#   - `variablePrefix` names the pipeline variables the template sets, so a consumer's step scripts keep reading their
+#     own names: <P>_CTR (the container), <P>_EXPECTED_VENDOR, <P>_GPU_VENDOR, <P>_IMAGE, <P>_DEVICE_OPTIONS and
+#     <P>_GPU_ONE_STAGE (1 on an AMD agent, whose two cards are identical). A step that has collected the phase
+#     manifests sets <P>_PHASES_COLLECTED to `true`, which is what publishes the evidence.
+#   - `hostPrep` is shell run on the host just before `docker run`, in the same script, so a shell variable it sets
+#     can be named in `containerOptions`, the extra `docker run` arguments (one or more per line, as bash words).
+#   - `steps` are host steps that run their commands inside the container (`docker exec "$(<P>_CTR)" ...`, or a
+#     wrapper that forwards the variables those commands read).
+#   - `releaseCommand` is a host command the `always()` cleanup runs before it removes the container, to release the
+#     host leases the job may hold. Removing the container frees them anyway; releasing first records it.
+# Mounts every job gets:
+#   - the checkout at its host path, so a path a step prints for the agent is valid on the host too;
+#   - the host lease directory at /gpu_leases and the host's lease tool at /gpu_lease_tool (read-only);
+#   - the job's artifact staging directory's `evidence` at /evidence: the phase manifests, records and reports
+#     (python -m gpu_epsilon.phase_evidence), published as the job's phase evidence.
+# The container runs as the image's user, which rootless Docker maps to the agent's uid, so nothing a step writes is
+# left owned by a uid the agent cannot remove.
+parameters:
+  - name: jobName
+    type: string
+  - name: displayName
+    type: string
+    default: ''
+  - name: dependsOn
+    type: object
+    default: []
+  # any: either agent. nvidia/amd: a vendor-demanded job.
+  - name: vendor
+    type: string
+    values: [any, nvidia, amd]
+  - name: jobClass
+    type: string
+    values: [ci-any-vendor, ci-vendor-marked, ci-release, ci-proof]
+  - name: project
+    type: string
+    values: [ci-it, ci-fts]
+  # {nvidia: <image>@sha256:..., amd: <image>@sha256:...}: digest-pinned, or the job fails before it starts anything.
+  - name: images
+    type: object
+  - name: variablePrefix
+    type: string
+    values: [IT, FTS]
+  # The evidence artifacts' and the container's name prefix.
+  - name: artifactPrefix
+    type: string
+    values: [it, fts]
+  # The job's timeout. The container sleeps 5 minutes longer, so one leaked by an agent crash exits on its own and the
+  # kernel drops its lease locks.
+  - name: timeoutInMinutes
+    type: number
+  # 0 fetches the full history.
+  - name: fetchDepth
+    type: number
+  - name: workspaceClean
+    type: string
+    values: [outputs, resources, all]
+  - name: hostPrep
+    type: string
+    default: ''
+  - name: containerOptions
+    type: string
+    default: ''
+  - name: steps
+    type: stepList
+  - name: releaseCommand
+    type: string
+  - name: leaseDir
+    type: string
+    default: /tmp/di_leases
+  - name: leaseTool
+    type: string
+    default: /opt/az_pipeline_agent/gpu_lease.sh
+
+jobs:
+  - job: ${{ parameters.jobName }}
+    ${{ if ne(parameters.displayName, '') }}:
+      displayName: ${{ parameters.displayName }}
+    dependsOn: ${{ parameters.dependsOn }}
+    timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+    cancelTimeoutInMinutes: 2
+    pool:
+      name: Default
+      demands:
+        - Agent.OS -equals Linux
+        - GPU_VENDOR
+        - GPU_COUNT -equals 2
+        - ${{ parameters.jobClass }}
+        - ${{ parameters.project }}
+        - ${{ if ne(parameters.vendor, 'any') }}:
+            - GPU_VENDOR -equals ${{ parameters.vendor }}
+    workspace:
+      clean: ${{ parameters.workspaceClean }}
+    variables:
+      - name: ${{ parameters.variablePrefix }}_EXPECTED_VENDOR
+        value: ${{ parameters.vendor }}
+      - name: ${{ parameters.variablePrefix }}_CTR
+        value: ${{ parameters.artifactPrefix }}-$(Build.BuildId)-$(System.JobAttempt)-${{ parameters.jobName }}
+    steps:
+      - checkout: self
+        fetchDepth: ${{ parameters.fetchDepth }}
+
+      - bash: |
+          set -euo pipefail
+          # One table maps the agent's vendor to its image, device options and the device node that must exist. On
+          # AMD the two cards are identical, so a consumer that places work by device size runs one stage there.
+          case "${GPU_VENDOR:-}" in
+            nvidia) image="$IMAGE_NVIDIA"; devices='--gpus all'; node=/dev/nvidiactl; one_stage=0 ;;
+            amd)    image="$IMAGE_AMD"; devices='--device=/dev/kfd --device=/dev/dri'; node=/dev/kfd; one_stage=1 ;;
+            *) echo "##vso[task.logissue type=error]agent GPU_VENDOR '${GPU_VENDOR:-}' is not nvidia or amd"; exit 1 ;;
+          esac
+          if [[ "$EXPECTED_VENDOR" != any && "$EXPECTED_VENDOR" != "$GPU_VENDOR" ]]; then
+            echo "##vso[task.logissue type=error]demanded $EXPECTED_VENDOR, agent reports $GPU_VENDOR"; exit 1
+          fi
+          test -e "$node" || { echo "##vso[task.logissue type=error]no ${node} on $(Agent.Name)"; exit 1; }
+          [[ "$image" == *@sha256:* ]] || { echo "##vso[task.logissue type=error]image is not digest-pinned: ${image}"; exit 1; }
+          echo "agent $(Agent.Name): vendor ${GPU_VENDOR}, image ${image}"
+          echo "##vso[task.setvariable variable=${{ parameters.variablePrefix }}_GPU_VENDOR]$GPU_VENDOR"
+          echo "##vso[task.setvariable variable=${{ parameters.variablePrefix }}_IMAGE]$image"
+          echo "##vso[task.setvariable variable=${{ parameters.variablePrefix }}_DEVICE_OPTIONS]$devices"
+          echo "##vso[task.setvariable variable=${{ parameters.variablePrefix }}_GPU_ONE_STAGE]$one_stage"
+        env:
+          IMAGE_NVIDIA: ${{ parameters.images.nvidia }}
+          IMAGE_AMD: ${{ parameters.images.amd }}
+          EXPECTED_VENDOR: ${{ parameters.vendor }}
+        displayName: 'Select runtime from agent vendor'
+
+      - bash: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          mkdir -p "$(Build.ArtifactStagingDirectory)/evidence"
+          ${{ parameters.hostPrep }}
+          options=(
+            ${{ parameters.containerOptions }}
+          )
+          # An AMD host names the devices its lease tool cannot discover, and the devices ROCr may use.
+          [[ -r "$LEASE_DIR/devices.inventory" ]] && options+=(-e "GPU_LEASE_DEVICES=$(cat "$LEASE_DIR/devices.inventory")")
+          [[ -n "${ROCR_VISIBLE_DEVICES:-}" ]] && options+=(-e "ROCR_VISIBLE_DEVICES=${ROCR_VISIBLE_DEVICES}")
+          # shellcheck disable=SC2086
+          docker run -d --rm --name "$CTR" $DEVICE_OPTIONS --shm-size=512m \
+            -v "$(Build.SourcesDirectory):$(Build.SourcesDirectory)" -w "$(Build.SourcesDirectory)" \
+            -v "$LEASE_DIR:/gpu_leases" \
+            -v "$LEASE_TOOL:/gpu_lease_tool:ro" \
+            -v "$(Build.ArtifactStagingDirectory)/evidence:/evidence" \
+            -e "${{ parameters.variablePrefix }}_GPU_VENDOR=$GPU_VENDOR" -e "${{ parameters.variablePrefix }}_IMAGE=$IMAGE" \
+            "${options[@]}" \
+            "$IMAGE" sleep $(( (${{ parameters.timeoutInMinutes }} + 5) * 60 ))
+        env:
+          CTR: $(${{ parameters.variablePrefix }}_CTR)
+          IMAGE: $(${{ parameters.variablePrefix }}_IMAGE)
+          GPU_VENDOR: $(${{ parameters.variablePrefix }}_GPU_VENDOR)
+          DEVICE_OPTIONS: $(${{ parameters.variablePrefix }}_DEVICE_OPTIONS)
+          LEASE_DIR: ${{ parameters.leaseDir }}
+          LEASE_TOOL: ${{ parameters.leaseTool }}
+        displayName: 'Start job container'
+
+      - ${{ each step in parameters.steps }}:
+          - ${{ step }}
+
+      # Release evidence is published only by vendor-demanded release legs, under the vendor named by the demand. Every
+      # other class publishes under the vendor the agent actually reported.
+      - ${{ if eq(parameters.jobClass, 'ci-release') }}:
+          - publish: $(Build.ArtifactStagingDirectory)/evidence
+            artifact: ${{ parameters.artifactPrefix }}-release-${{ parameters.vendor }}-$(System.JobAttempt)
+            condition: and(always(), eq(variables['${{ parameters.variablePrefix }}_PHASES_COLLECTED'], 'true'))
+            displayName: 'Publish release phase evidence'
+      - ${{ if ne(parameters.jobClass, 'ci-release') }}:
+          - publish: $(Build.ArtifactStagingDirectory)/evidence
+            artifact: ${{ parameters.artifactPrefix }}-${{ parameters.jobName }}-$(${{ parameters.variablePrefix }}_GPU_VENDOR)-$(System.JobAttempt)
+            condition: and(always(), eq(variables['${{ parameters.variablePrefix }}_PHASES_COLLECTED'], 'true'))
+            displayName: 'Publish phase evidence'
+
+      - bash: |
+          ${{ parameters.releaseCommand }} || true
+          docker rm -f "$CTR" >/dev/null 2>&1 || true
+        env:
+          CTR: $(${{ parameters.variablePrefix }}_CTR)
+        condition: always()
+        displayName: 'Release host leases and remove container'
