@@ -71,9 +71,10 @@ parameters:
   # kernel drops its lease locks.
   - name: timeoutInMinutes
     type: number
-  # 0 fetches the full history.
+  # The checkout's depth (0 fetches the full history). -1 leaves it to the pipeline's own settings.
   - name: fetchDepth
     type: number
+    default: -1
   - name: workspaceClean
     type: string
     values: [outputs, resources, all]
@@ -120,7 +121,8 @@ jobs:
         value: ${{ parameters.artifactPrefix }}-$(Build.BuildId)-$(System.JobAttempt)-${{ parameters.jobName }}
     steps:
       - checkout: self
-        fetchDepth: ${{ parameters.fetchDepth }}
+        ${{ if ge(parameters.fetchDepth, 0) }}:
+          fetchDepth: ${{ parameters.fetchDepth }}
 
       - bash: |
           set -euo pipefail
