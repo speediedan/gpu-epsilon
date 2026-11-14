@@ -7,6 +7,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The GPU job template (`templates/gpu-job.yml`) both projects' Azure GPU pipelines run, from this repository as a
+  resource pinned to a tag: admission, the vendor table, the digest-pinned image check, the container's lifecycle and
+  mounts, evidence publishing and the cleanup, with what differs between the projects as parameters
+  ([speediedan/interpretune#924](https://github.com/speediedan/interpretune/issues/924)).
+
 - The phase-evidence writer (`gpu_epsilon.phase_evidence`): `list`, `collect`, `run-env`, `report` and
   `coverage-diff`, configured per project in `[tool.gpu-epsilon.phase-evidence]`, replacing finetuning-scheduler's
   `tests/gpu_ci/phase_manifest.py` and interpretune's `tests/gpu_ci/phase_report.py`. Manifests are byte-identical to

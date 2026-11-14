@@ -3,7 +3,8 @@
 Shared GPU CI tooling for [finetuning-scheduler](https://github.com/speediedan/finetuning-scheduler) and
 [interpretune](https://github.com/speediedan/interpretune): the rules their GPU phase evidence is read by, the tool
 that writes that evidence, the release eligibility check both projects' release pipelines run, the special-test runner
-that runs their one-process-per-test selections, and the phase driver that runs a coverage run's phases in order.
+that runs their one-process-per-test selections, the phase driver that runs a coverage run's phases in order, and the
+Azure Pipelines GPU job both projects' GPU pipelines run.
 
 Both projects run their GPU CI on the same self-hosted agents, one per GPU vendor, and report each run phase by phase
 in the same evidence format. Each used to carry its own copy of the code that reads that evidence. This repository
@@ -255,6 +256,49 @@ the host's lease command, so one lease covers the whole run. It is a no-op unles
 This is the Python form of the `gpu_lease_reexec` seam in each project's `scripts/gpu_lease_wrap.sh`, so a project
 needs no shell entry script in front of the runner. The lease tool itself, and the CI steps that hold a lease across a
 job, stay with the projects.
+
+## GPU job template
+
+`templates/gpu-job.yml` is the Azure Pipelines job both projects' GPU pipelines run: one job that takes either GPU
+agent and chooses its image and device options at run time from the vendor the agent declares (`GPU_VENDOR`). An
+Azure container resource is fixed before the agent is known, so it is a host job that starts its own container. A
+pipeline uses it from this repository as a resource, pinned to a tag, so the template does not move under it:
+
+```yaml
+resources:
+  repositories:
+    - repository: ci
+      type: github
+      name: speediedan/gpu-epsilon
+      endpoint: speediedan  # the project's GitHub service connection
+      ref: refs/tags/<tag>
+jobs:
+  - template: templates/gpu-job.yml@ci
+    parameters: ...
+```
+
+The template owns what the two jobs shared: admission by demands (the job class and the project are agent
+capabilities, and a vendor-demanded job adds `GPU_VENDOR -equals <vendor>`), the vendor table, the digest-pinned
+image check, the container's start with the checkout, lease directory, lease tool and evidence directory mounted, a
+container sleep 5 minutes longer than the job timeout (so a container leaked by an agent crash exits and the kernel
+drops its lease locks), evidence publishing and the `always()` cleanup. What differs is a parameter:
+
+| parameter | what it is |
+| --- | --- |
+| `jobName`, `displayName`, `dependsOn` | the job's own |
+| `vendor`, `jobClass`, `project`, `images` | admission and the digest-pinned image for each vendor |
+| `variablePrefix` | names the variables the template sets (`<P>_CTR`, `<P>_EXPECTED_VENDOR`, `<P>_GPU_VENDOR`, `<P>_IMAGE`, `<P>_DEVICE_OPTIONS`, `<P>_GPU_ONE_STAGE`) and the one it reads (`<P>_PHASES_COLLECTED`, which a step sets once the phase manifests are collected, and which publishes the evidence), so a project's step scripts keep their own names |
+| `artifactPrefix` | the container's and the evidence artifacts' name prefix: `<a>-release-<vendor>-<attempt>` for a release leg, `<a>-<job>-<vendor>-<attempt>` otherwise |
+| `timeoutInMinutes`, `fetchDepth`, `workspaceClean` | the job's timeout, the checkout's depth (left to the pipeline unless set), the workspace's `clean` |
+| `hostPrep` | shell run on the host just before `docker run`, in the same script, so a variable it sets can be named in `containerOptions` |
+| `containerOptions` | extra `docker run` arguments, as bash words, one or more per line |
+| `steps` | the job's work, between the container's start and evidence publishing: host steps that run their commands in the container |
+| `releaseCommand` | a host command the cleanup runs before it removes the container, to release the job's host leases |
+| `leaseDir`, `leaseTool` | the host's lease directory and lease tool, mounted at `/gpu_leases` and `/gpu_lease_tool` |
+
+Azure is the template's only interpreter, so hosted CI holds it to text checks (`tests/test_gpu_job_template.py`);
+what shows it expands is a consumer's pipeline preview (`POST .../pipelines/<id>/preview` with `previewRun`), which
+resolves the template from this repository through the consumer's service connection without running anything.
 
 ## Development
 
