@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The scheduled-run disposition (`gpu_epsilon.scheduled_runs`), moved from interpretune's
+  `tests/gpu_ci/scheduled_run_disposition.py` at its second consumer: an operator's verdict on a queued scheduled GPU
+  build (release, reject as covered or stale, or hold, naming what holds it) and an `--in-job` step that cancels a
+  scheduled run whose tree a green full run already covered. What was interpretune's is configuration in
+  `[tool.gpu-epsilon.scheduled-runs]`: the step whose log says a run was full and its pattern, the repository, the
+  schedules that always run, and the approval cap
+  ([speediedan/finetuning-scheduler#210](https://github.com/speediedan/finetuning-scheduler/issues/210)).
+
 - The GPU job template (`templates/gpu-job.yml`) both projects' Azure GPU pipelines run, from this repository as a
   resource pinned to a tag: admission, the vendor table, the digest-pinned image check, the container's lifecycle and
   mounts, evidence publishing and the cleanup, with what differs between the projects as parameters
