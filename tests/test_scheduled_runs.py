@@ -21,6 +21,8 @@ import pytest
 from gpu_epsilon import scheduled_runs as srd
 from gpu_epsilon.scheduled_runs import ConfigError, FullRun, HostState, ScheduledRunsConfig, dispose
 
+pytestmark = pytest.mark.skipif(sys.version_info < (3, 11), reason="the disposition reads pyproject.toml with tomllib")
+
 CONFIGS = Path(__file__).parent / "configs"
 SRC = Path(__file__).resolve().parents[1] / "src"
 IT_CONFIG = CONFIGS / "interpretune.scheduled-runs.toml"
