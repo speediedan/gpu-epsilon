@@ -1,0 +1,8 @@
+# finetuning-scheduler's scheduled-run disposition: a run is full when its standalone phase ran every standalone test
+# (.azure-pipelines/scripts/gpu_job_container.sh prints the scope that phase runs). A pull request's merge-ref run can
+# share main's tree with the smoke set, so the scope, not the tree alone, decides coverage. It has no always-run
+# schedule.
+[tool.gpu-epsilon.scheduled-runs]
+repository = "speediedan/finetuning-scheduler"
+run-step = "Testing: standalone multi-gpu"
+run-pattern = 'standalone scope: (full|smoke)\b'

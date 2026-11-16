@@ -3,8 +3,9 @@
 Shared GPU CI tooling for [finetuning-scheduler](https://github.com/speediedan/finetuning-scheduler) and
 [interpretune](https://github.com/speediedan/interpretune): the rules their GPU phase evidence is read by, the tool
 that writes that evidence, the release eligibility check both projects' release pipelines run, the special-test runner
-that runs their one-process-per-test selections, the phase driver that runs a coverage run's phases in order, and the
-Azure Pipelines GPU job both projects' GPU pipelines run.
+that runs their one-process-per-test selections, the phase driver that runs a coverage run's phases in order, the
+Azure Pipelines GPU job both projects' GPU pipelines run, and the disposition of a scheduled GPU build whose tree is
+already covered.
 
 Both projects run their GPU CI on the same self-hosted agents, one per GPU vendor, and report each run phase by phase
 in the same evidence format. Each used to carry its own copy of the code that reads that evidence. This repository
@@ -299,6 +300,38 @@ drops its lease locks), evidence publishing and the `always()` cleanup. What dif
 Azure is the template's only interpreter, so hosted CI holds it to text checks (`tests/test_gpu_job_template.py`);
 what shows it expands is a consumer's pipeline preview (`POST .../pipelines/<id>/preview` with `previewRun`), which
 resolves the template from this repository through the consumer's service connection without running anything.
+
+## Scheduled-run disposition
+
+A scheduled GPU build exists to give a branch a full run, so one whose exact tree (the git tree object, not the
+commit) a green full run already ran repeats work. `gpu_epsilon.scheduled_runs` decides whether it should run:
+
+```bash
+# an operator's verdict on a queued scheduled build: exit 0 release, 1 reject, 3 hold, 2 refused
+AZURE_DEVOPS_EXT_PAT=... python -m gpu_epsilon.scheduled_runs --build 1704 --org https://dev.azure.com/<org> \
+    --project <project> --pool-project <another project on the pool> --lease-status-cmd "$GPU_LEASE_CMD --status"
+# an early step of the scheduled job (SYSTEM_ACCESSTOKEN mapped in): a covered run cancels itself; always exits 0
+python -m gpu_epsilon.scheduled_runs --in-job
+```
+
+A run counts as full by its own record, never by its trigger: the log of the step the project names must report the
+full mode, so a narrowed run (a selected gate, a smoke set) of the same tree covers nothing. The operator's verdict
+releases an uncovered build only when the pool is quiet across every project on it and the host's leases are free,
+holds it otherwise, and rejects it as stale past the approval cap. In the job, anything that cannot be established lets
+the run go ahead. The module docstring states every rule. Configuration is `[tool.gpu-epsilon.scheduled-runs]` in the
+project's `pyproject.toml` (`--config` names another file):
+
+| key | meaning |
+| --- | --- |
+| `repository` | the GitHub `owner/name` the pipeline builds, whose commits' trees are compared |
+| `run-step` | the display name of the step whose log says whether a run was full |
+| `run-pattern` | a regular expression with one group, the run's mode; it should match only a resolved value |
+| `full-mode` | the mode that makes a green run cover its tree; defaults to `full` |
+| `always-run` | schedule display names never rejected as covered (a schedule whose extra work runs in no other build) |
+| `approval-cap-minutes` | how long a queued scheduled build may wait before it is rejected as stale; defaults to 120 |
+| `description` | free text, ignored |
+
+[`tests/configs/`](tests/configs) holds both projects' tables as the tests use them.
 
 ## Development
 

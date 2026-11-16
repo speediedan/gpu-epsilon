@@ -1,0 +1,7 @@
+# interpretune's scheduled-run disposition, as its tests/gpu_ci/scheduled_run_disposition.py defines it (the plan step,
+# PLAN_LINE and WEEKLY_SCHEDULE from tests/gpu_ci/plan_gpu_run.py).
+[tool.gpu-epsilon.scheduled-runs]
+repository = "speediedan/interpretune"
+run-step = "Plan the GPU run"
+run-pattern = 'GPU run plan: mode=(full|selected|none)\b'
+always-run = ["weekly extended GPU run"]
